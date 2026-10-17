@@ -1,1 +1,236 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>ع الأسفلت 3D</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;background:#8bc9ed;font-family:Arial,sans-serif;color:white;touch-action:none}
+canvas{display:block}
+#hud{position:fixed;inset:0;pointer-events:none}
+.top{display:flex;justify-content:space-between;padding:12px;gap:8px}
+.panel{background:#101923d9;border:1px solid #ffffff30;border-radius:12px;padding:9px 13px;text-shadow:0 1px 2px #000}
+#speed{font-size:25px;font-weight:bold;color:#ffdb54}
+#title{font-size:17px;font-weight:bold}
+button{border:1px solid #ffffff50;background:#172534eF;color:white;border-radius:12px;padding:12px;font-weight:bold;font-size:15px;touch-action:none}
+button:active,.active{background:#d94825}
+#controls{position:fixed;bottom:16px;left:0;right:0;display:flex;justify-content:space-between;align-items:end;padding:12px;gap:8px}
+.group{display:flex;gap:8px;align-items:center}
+.control{width:65px;height:62px;font-size:24px}
+.pedal{width:72px;height:78px}
+#notice{position:fixed;top:75px;left:50%;transform:translateX(-50%);background:#101923e8;padding:10px 15px;border-radius:10px;display:none;text-align:center}
+#start{position:fixed;inset:0;background:#07121cbb;display:flex;align-items:center;justify-content:center;text-align:center}
+#startbox{background:#111e2bf2;border:1px solid #ffffff35;border-radius:20px;padding:25px;width:min(88%,380px)}
+#start h1{color:#ffcc43;margin:0 0 10px}
+#start p{line-height:1.8;color:#d8e5ef}
+#go{background:#d64a27;padding:14px 30px;font-size:18px}
+.small{font-size:12px;color:#cbd7e2}
+@media(orientation:landscape){
+ .top{padding:7px}
+ #controls{padding:7px}
+ .control{height:53px}
+ .pedal{height:60px}
+}
+</style>
+</head>
+<body>
+<div id="hud">
+ <div class="top">
+  <div class="panel"><div id="title">🏁 ع الأسفلت 3D</div><div id="roadname">الطريق المصري</div></div>
+  <div class="panel">السرعة<br><span id="speed">0</span> كم/س</div>
+  <div class="panel">الوقت<br><span id="clock">00:00</span></div>
+  <div class="group" style="pointer-events:auto">
+   <button id="full">⛶</button>
+   <button id="gyro">📱</button>
+  </div>
+ </div>
+ <div id="notice"></div>
+ <div id="controls">
+  <div class="group">
+   <button class="control" id="left">◀</button>
+   <button class="control" id="right">▶</button>
+  </div>
+  <div class="group">
+   <button class="pedal" id="brake">فرامل</button>
+   <button class="pedal" id="gas">🚀<br>بنزين</button>
+  </div>
+ </div>
+</div>
 
+<div id="start">
+ <div id="startbox">
+  <h1>ع الأسفلت 3D</h1>
+  <p>عيش تجربة القيادة على الطريق المصري.<br>استخدم الأسهم للتوجيه والبنزين للتسارع.</p>
+  <button id="go">ابدأ القيادة</button>
+  <p class="small">نموذج تجريبي أولي — سيتم تطوير السيارات والطرق والمرور.</p>
+ </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+let scene,camera,renderer,car,road;
+let speed=0,steer=0,started=false,gyroOn=false,tilt=0;
+let elapsed=0,last=performance.now(),roadLines=[],traffic=[],buildings=[];
+const keys={gas:false,brake:false,left:false,right:false};
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+function mat(color,roughness=.8){
+ return new THREE.MeshStandardMaterial({color,roughness});
+}
+function box(parent,w,h,d,color,x,y,z){
+ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(color));
+ m.position.set(x,y,z);parent.add(m);return m;
+}
+function buildCar(){
+ car=new THREE.Group();
+ box(car,1.85,.48,3.8,0x1686df,0,.72,0);
+ box(car,1.55,.64,1.8,0x1262a4,0,1.20,-.25);
+ box(car,1.35,.48,.08,0x8fd8f7,0,1.25,.67);
+ box(car,1.3,.42,.08,0x8fd8f7,0,1.25,-1.10);
+ box(car,.38,.15,.08,0xffffff,-.55,.83,1.94);
+ box(car,.38,.15,.08,0xffffff,.55,.83,1.94);
+ box(car,.42,.15,.08,0xff2929,-.55,.83,-1.94);
+ box(car,.42,.15,.08,0xff2929,.55,.83,-1.94);
+ for(const x of [-.98,.98]){
+  for(const z of [-1.25,1.25]){
+   const wheel=new THREE.Mesh(new THREE.CylinderGeometry(.37,.37,.22,16),mat(0x17191d));
+   wheel.rotation.z=Math.PI/2;wheel.position.set(x,.40,z);car.add(wheel);
+  }
+ }
+ scene.add(car);car.position.set(0,0,2);
+}
+function init(){
+ scene=new THREE.Scene();scene.background=new THREE.Color(0x91d0f1);
+ scene.fog=new THREE.Fog(0x91d0f1,65,210);
+ camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,500);
+ renderer=new THREE.WebGLRenderer({antialias:true});
+ renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));
+ renderer.setSize(innerWidth,innerHeight);
+ renderer.shadowMap.enabled=true;
+ document.body.appendChild(renderer.domElement);
+ scene.add(new THREE.HemisphereLight(0xe7f5ff,0x68704a,2));
+ const sun=new THREE.DirectionalLight(0xffffff,2.5);
+ sun.position.set(-20,35,10);scene.add(sun);
+ const ground=new THREE.Mesh(new THREE.PlaneGeometry(500,500),mat(0x9caa72));
+ ground.rotation.x=-Math.PI/2;ground.position.y=-.12;scene.add(ground);
+ road=new THREE.Group();scene.add(road);
+ box(road,12,.12,400,0x34383c,0,-.01,-120);
+ for(let z=-315;z<80;z+=9){
+  roadLines.push(box(road,.13,.025,4,0xf5f0d6,0,.07,z));
+ }
+ for(let z=-300;z<50;z+=18){
+  for(const side of [-1,1]){
+   box(road,.25,.45,.25,0xd3c6a5,side*6.2,.25,z);
+   const b=box(road,5+Math.random()*4,5+Math.random()*10,5+Math.random()*4,
+    [0xc9b99b,0xe0d4bb,0xb7c2c4,0xd6c1a6][Math.floor(Math.random()*4)],
+    side*(12+Math.random()*7),0, z-Math.random()*8);
+   b.position.y=(b.geometry.parameters.height||6)/2;
+   buildings.push(b);
+  }
+ }
+ buildCar();
+ for(let i=0;i<5;i++){
+  const g=new THREE.Group();
+  box(g,1.7,.5,3.3,[0xd4a52c,0xeeeeee,0x18894c,0xb6322b][i%4],0,.65,0);
+  box(g,1.3,.55,1.4,0x586b78,0,1.05,-.2);
+  for(const x of [-.9,.9])for(const z of [-1,1]){
+   const w=new THREE.Mesh(new THREE.CylinderGeometry(.3,.3,.18,12),mat(0x171717));
+   w.rotation.z=Math.PI/2;w.position.set(x,.32,z);g.add(w);
+  }
+  g.position.set((i%2?2.6:-2.6),0,-35-i*35);scene.add(g);traffic.push(g);
+ }
+}
+function notify(t){
+ $('notice').textContent=t;$('notice').style.display='block';
+ clearTimeout(notify.timer);notify.timer=setTimeout(()=>$('notice').style.display='none',2300);
+}
+function bindHold(id,key){
+ const b=$(id);
+ const down=e=>{e.preventDefault();keys[key]=true;b.classList.add('active')};
+ const up=e=>{e.preventDefault();keys[key]=false;b.classList.remove('active')};
+ b.addEventListener('pointerdown',down);
+ ['pointerup','pointercancel','pointerleave'].forEach(ev=>b.addEventListener(ev,up));
+}
+bindHold('gas','gas');bindHold('brake','brake');
+bindHold('left','left');bindHold('right','right');
+
+$('go').onclick=()=>{
+ if(!renderer){try{init()}catch(e){notify('تعذر تشغيل 3D. تأكد من اتصال الإنترنت ثم أعد فتح الصفحة.');return}}
+ started=true;$('start').style.display='none';last=performance.now();
+};
+$('full').onclick=async()=>{
+ try{
+  if(!document.fullscreenElement)await document.documentElement.requestFullscreen();
+  else await document.exitFullscreen();
+ }catch(e){notify('وضع ملء الشاشة غير مدعوم هنا');}
+};
+$('gyro').onclick=async()=>{
+ if(!started){notify('ابدأ القيادة أولاً');return}
+ try{
+  if(typeof DeviceOrientationEvent==='undefined')throw Error();
+  if(typeof DeviceOrientationEvent.requestPermission==='function'){
+   const result=await DeviceOrientationEvent.requestPermission();
+   if(result!=='granted')throw Error();
+  }
+  window.addEventListener('deviceorientation',e=>{
+   if(e.gamma!==null)tilt=clamp(e.gamma/25,-1,1);
+  });
+  gyroOn=!gyroOn;
+  $('gyro').classList.toggle('active',gyroOn);
+  notify(gyroOn?'تم تفعيل مستشعر الحركة':'تم إيقاف مستشعر الحركة');
+ }catch(e){notify('اسمح بإذن مستشعر الحركة من المتصفح وجرب مرة أخرى');}
+};
+addEventListener('keydown',e=>{
+ if(e.key==='ArrowUp'||e.key==='w')keys.gas=true;
+ if(e.key==='ArrowDown'||e.key==='s')keys.brake=true;
+ if(e.key==='ArrowLeft'||e.key==='a')keys.left=true;
+ if(e.key==='ArrowRight'||e.key==='d')keys.right=true;
+});
+addEventListener('keyup',e=>{
+ if(['ArrowUp','w'].includes(e.key))keys.gas=false;
+ if(['ArrowDown','s'].includes(e.key))keys.brake=false;
+ if(['ArrowLeft','a'].includes(e.key))keys.left=false;
+ if(['ArrowRight','d'].includes(e.key))keys.right=false;
+});
+addEventListener('resize',()=>{
+ if(!renderer)return;
+ camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+});
+function animate(now){
+ requestAnimationFrame(animate);
+ if(!renderer)return;
+ const dt=Math.min((now-last)/1000,.04);last=now;
+ if(started){
+  elapsed+=dt;
+  if(keys.gas)speed=Math.min(180,speed+40*dt);
+  else speed=Math.max(0,speed-7*dt);
+  if(keys.brake)speed=Math.max(0,speed-90*dt);
+  const steering=(keys.right?1:0)-(keys.left?1:0);
+  const direction=gyroOn?tilt:steering;
+  car.position.x=clamp(car.position.x+direction*dt*(1.4+speed*.035),-4.6,4.6);
+  car.rotation.z=-direction*.075;
+  const move=speed*.13*dt;
+  roadLines.forEach(o=>{o.position.z+=move;if(o.position.z>8)o.position.z-=360});
+  buildings.forEach(o=>{o.position.z+=move;if(o.position.z>30)o.position.z-=350});
+  traffic.forEach((o,i)=>{
+   o.position.z+=move;
+   if(o.position.z>10){o.position.z=-170-Math.random()*100;o.position.x=(Math.random()<.5?-1:1)*(2.5+Math.random()*.7)}
+  });
+  $('speed').textContent=Math.round(speed);
+  const s=Math.floor(elapsed);
+  $('clock').textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+ }
+ const target=new THREE.Vector3(car?car.position.x*.5:0,2.7,car?car.position.z+7:10);
+ camera.position.lerp(new THREE.Vector3(car?car.position.x*.7:0,5.2,car?car.position.z+10:12),.09);
+ camera.lookAt(target);
+ renderer.render(scene,camera);
+}
+requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>
